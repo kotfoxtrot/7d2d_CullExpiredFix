@@ -141,31 +141,55 @@ lists more chunks. Total chunks reset is unchanged.
 
 ## Measured effect
 
-Live server, 4 vCPU, 90k-122k saved chunks. Vanilla 4.2 h, fastScan 12.1 h, throttle 3.5 h.
-Rows at 9+ players; frame figures are taken at a matched 9-10 players because the throttle
-session ran at a much higher population than the others.
+Live server, 4 vCPU, 90k-133k saved chunks. Vanilla 4.2 h, fastScan 12.1 h, throttle 3.5 h,
+both 5.4 h. All figures are taken at a matched 9-10 players, because the sessions ran at
+different populations and raw aggregates put the population difference on the mod.
 
 | | sweeps/s | ms/sweep | ns/key | share of one core | `isChunkInSaveDir` blocked |
 |---|---|---|---|---|---|
 | vanilla | 17.7 | 26.3 | 250 | 46.6% | 278 ms/s |
 | fastScan only | 10.9 | 6.3 | 53 | 6.9% | 12.5 ms/s |
 | throttle only | 0.03 | 29-39 | 302-355 | 0.1% | 0.5 ms/s |
+| both | 0.03 | 16.9 | 127 | 0.055% | 0.19 ms/s |
+
+At 9-10 players the four modes give 51.450% / 5.794% / 0.100% / 0.055% of one core and
+320.67 / 9.67 / 0.34 / 0.19 ms/s of blocking. Both switches together: 928x less CPU and 1715x
+less lock blocking than vanilla.
 
 | at 9-10 players | frame | fps |
 |---|---|---|
 | vanilla | 54.08 ms | 18.49 |
 | fastScan only | 51.40 ms | 19.45 |
 | throttle only | 51.52 ms | 19.41 |
+| both | 51.86 ms | 19.28 |
 
-The two switches are orthogonal: `fastScan` cuts what one sweep costs, `throttle` cuts how often
-a sweep happens. Either alone removes `CullExpiredChunks` from the profile. Run both: the
-throttle keeps the frequency near zero, and `fastScan` keeps each surviving sweep at ~7 ms
-instead of ~39, which matters as the save directory grows.
+The frame difference between the three mod modes is inside the noise of world state; all three
+remove `CullExpiredChunks` from the frame and all three give ~2 ms over vanilla. The reason to
+run both is what one sweep is made of:
 
-Reset throughput is not reduced by throttling. At matched population the throttle removed 7363
-and 9907 chunks/h against fastScan's 6491 and 6487. A sweep removes ~59 chunks against a
-10000-chunk cap, so the cap never binds; throttling adds latency, not a ceiling.
+| | keys | scan | ns/key | UpdateProtection | RemoveChunks | total |
+|---|---|---|---|---|---|---|
+| fastScan only | 90064 | 4.70 ms | 52 | 1.54 ms | 0.06 ms (0.3 chunks) | 6.31 ms |
+| both | 132724 | 8.23 ms | 62 | 3.63 ms | 3.59 ms (67.0 chunks) | 16.89 ms |
 
-`ms/sweep` includes `UpdateChunkProtectionLevels` (1.6-1.9 ms measured), which this mod does not
-change and which becomes 24-26% of the sweep once `fastScan` is on. The `max` outliers, up to
-1186 ms, are almost entirely that call.
+Less than half of a throttled sweep is the scan. The rest is `UpdateChunkProtectionLevels`,
+which this mod does not change, and `RemoveChunks`, which is the same removal work batched
+instead of spread over 10k calls per hour. The `max` outliers, up to 1186 ms, are almost
+entirely `UpdateChunkProtectionLevels`.
+
+The two switches are orthogonal: `throttle` cuts how often a sweep happens, `fastScan` cuts what
+one sweep costs and, more importantly, decouples that cost from the size of the save directory
+and the pending-reset list. Over the combined run `resetRequestedChunks` grew from 103 to 125;
+on the vanilla loop each entry adds one comparison per key per sweep (16.6M comparisons per
+sweep at 133k keys), on the fast loop it is a `HashSet` probe and the growth is free. Throttling
+alone does not defuse that, it only steps on it less often.
+
+Reset throughput is not reduced by throttling. Catalogue balance per hour at matched population:
+vanilla +1935, fastScan -1296, throttle only +9458, both +295. With both switches the directory
+oscillates (123366 -> 138903 -> 124956 over the run) instead of running away. A sweep removes
+~67 chunks against a 10000-chunk cap, so the cap never binds; throttling adds latency, not a
+ceiling.
+
+The counter line's `mean` and `perKey` divide the whole of `Run()` — scan plus
+`UpdateChunkProtectionLevels` plus `RemoveChunks` — by the key count, so with `throttle` on they
+read high (14.81 ms / 109 ns) against a scan that is actually 62 ns/key.
