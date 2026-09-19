@@ -27,12 +27,26 @@ namespace CullExpiredFix
                 harmony.CreateClassProcessor(typeof(RequestResetPatch)).Patch();
                 harmony.CreateClassProcessor(typeof(GamePrefPatch)).Patch();
 
-                Log.Out("[CullExpiredFix] active, " + Settings.Describe());
+                Settings.StartWatch();
+                ModEvents.GameShutdown.RegisterHandler(OnGameShutdown);
+
+                Log.Out("[CullExpiredFix] active, " + Settings.Describe() + ", config: " + Settings.Path);
             }
             catch (Exception ex)
             {
                 CullPatch.Disabled = true;
                 Log.Error("[CullExpiredFix] init failed, vanilla behaviour kept: " + ex);
+            }
+        }
+
+        private void OnGameShutdown(ref ModEvents.SGameShutdownData data)
+        {
+            try
+            {
+                Settings.StopWatch();
+            }
+            catch
+            {
             }
         }
 

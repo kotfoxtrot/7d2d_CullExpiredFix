@@ -45,12 +45,12 @@ switches:
 - **fastScan** — same loop, three changes: `HashSet` instead of `List.Contains`, iteration over
   `KeyValuePair` so the timestamp comes from the enumerator instead of a second dictionary
   lookup, and the group-timestamp override applied inline. Expected 20.2 ms -> 3.6 ms.
-- **throttle** — skips the sweep unless `intervalSeconds` have passed since the last one.
+- **throttle** — skips the sweep unless `IntervalSeconds` have passed since the last one.
   At 30 s this turns 17.7 sweeps/s into 0.03/s.
 
 Semantics are unchanged: same lock order, same 10000-chunk cap, same protection handling, same
 `RemoveChunks(expired, true, false)` call, same `maxChunkAge < 0` branch. The only observable
-difference is that an expired chunk may be removed up to `intervalSeconds` late — against a
+difference is that an expired chunk may be removed up to `IntervalSeconds` late — against a
 `MaxChunkAge` of 7 in-game days (~7 real hours) that is a 0.12% delay.
 
 `RequestChunkReset` and a `MaxChunkAge` game-pref change both force the next sweep to run
@@ -67,12 +67,27 @@ as `BadImageFormatException: Method has zero rva` and kills the SaveChunks threa
 
 ## Config.xml
 
-| attribute | default | meaning |
+The file is watched (`FileSystemWatcher` plus a one-second poll fallback) and re-read within about
+a second of any change on disk. No restart and no console command needed. If the file is malformed
+the current values are kept and a warning is logged. `Config.xml` is created with defaults on first
+start if it is missing.
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<CullExpiredFix>
+  <property name="FastScan" value="true" />
+  <property name="Throttle" value="true" />
+  <property name="IntervalSeconds" value="30" />
+  <property name="LogEverySeconds" value="600" />
+</CullExpiredFix>
+```
+
+| property | default | meaning |
 |---|---|---|
-| `fastScan` | `true` | use the mod scan loop |
-| `throttle` | `true` | enforce a minimum gap between sweeps |
-| `intervalSeconds` | `30` | that gap, 0..3600 |
-| `logEverySeconds` | `600` | counter line in the server log, 0 disables; emitted in every mode |
+| `FastScan` | `true` | use the mod scan loop |
+| `Throttle` | `true` | enforce a minimum gap between sweeps |
+| `IntervalSeconds` | `30` | that gap, 0..3600 |
+| `LogEverySeconds` | `600` | counter line in the server log, 0 disables; emitted in every mode |
 
 ## Commands
 
@@ -86,6 +101,7 @@ cullfix log <sec>        counter line interval, 0 disables
 cullfix run              run one sweep on the next save cycle
 cullfix stuck [n]        list reset requests that can never complete
 cullfix save             write Config.xml
+cullfix reload           re-read Config.xml now
 ```
 
 Setting `throttle off fastscan on` measures the scan fix alone; that is the useful A/B, because
@@ -94,7 +110,7 @@ list would go unnoticed.
 
 ## Counter line
 
-Written to the server log every `logEverySeconds`, and printed by `cullfix`:
+Written to the server log every `LogEverySeconds`, and printed by `cullfix`:
 
 ```
 [CullExpiredFix] fastScan=on throttle=on interval=30s logEvery=600s calls=144663 skipped=0 (0.0%)
