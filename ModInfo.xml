@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<xml>
+    <Name value="CullExpiredFix" />
+    <DisplayName value="CullExpiredFix" />
+    <Version value="1.0" />
+    <Description value="Cuts the cost of RegionFileManager.CullExpiredChunks: faster scan loop and a minimum interval between scans. Built for game version 2.6." />
+    <Author value="sdtdtest" />
+    <Website value="" />
+</xml>
