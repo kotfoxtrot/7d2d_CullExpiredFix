@@ -3,7 +3,7 @@
     <Name value="CullExpiredFix" />
     <DisplayName value="CullExpiredFix" />
     <Version value="1.0" />
-    <Description value="Cuts the cost of RegionFileManager.CullExpiredChunks: faster scan loop and a minimum interval between scans. Built for game version 2.6." />
-    <Author value="sdtdtest" />
-    <Website value="" />
+    <Description value="Cuts the cost of RegionFileManager.CullExpiredChunks: a faster scan loop (HashSet instead of List.Contains, no repeated dictionary lookups) and a minimum interval between sweeps. Semantics are unchanged. Only does work on a server with MaxChunkAge enabled or chunk resets pending, so it belongs next to MaxChunkAgeDeadlockFix. Config.xml is hot-reloaded. Console: cullfix status|reset|interval|throttle|fastscan|log|run|stuck|save|reload. Built for game version 2.6." />
+    <Author value="kotfoxtrot" />
+    <Website value="https://github.com/kotfoxtrot/7d2d_CullExpiredFix" />
 </xml>

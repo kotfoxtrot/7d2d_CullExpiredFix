@@ -1,10 +1,28 @@
 # CullExpiredFix
 
-Server-side Harmony mod for 7 Days to Die dedicated server **2.6 (b14)**.
-Cuts the cost of `RegionFileManager.CullExpiredChunks`. No client download.
+Cuts the cost of `RegionFileManager.CullExpiredChunks` on a 7 Days to Die dedicated server: a
+faster scan loop and a minimum interval between sweeps.
 
-Port of the 3.x build. `CullExpiredChunks`, its call site in `DoSaveChunks` and the
-`List<long>.Contains` in its loop are identical in 2.6; only the chunk-grouping types differ.
+> Server-side Harmony mod · 7 Days to Die dedicated server 2.6 · no client download
+
+## What it does
+
+`RegionFileManager.thread_SaveChunks` runs `DoSaveChunks()` once per saved chunk, and every call
+sweeps the entire save directory looking for expired chunks. On a live server that is 17.7 sweeps
+per second at 26 ms each — 47% of one core, and 278 ms/s of blocking for everything else that needs
+`chunksInSaveDir`.
+
+The mod replaces that sweep with two independent switches: a rewritten scan loop (`HashSet` instead
+of `List.Contains`, no repeated dictionary lookups) and a throttle that enforces a minimum gap
+between sweeps. Semantics are unchanged. Both switches together: **928x less CPU and 1715x less lock
+blocking** than vanilla.
+
+Full numbers in [Measured effect](#measured-effect), the reasoning in [Problem](#problem).
+
+### Port of the 3.x build
+
+`CullExpiredChunks`, its call site in `DoSaveChunks` and the `List<long>.Contains` in its loop are
+identical in 2.6; only the chunk-grouping types differ.
 
 | 3.x | 2.6 |
 |---|---|
@@ -12,79 +30,68 @@ Port of the 3.x build. `CullExpiredChunks`, its call site in `DoSaveChunks` and 
 | `groupTimestampsDirty` + `UpdateGroupTimestamps()` inside the sweep | neither exists: `SetChunkTimestamp` keeps group timestamps current on every save |
 | `RemoveChunks(expired, true, false)` | `RemoveChunks(expired, true)` |
 
-Nothing else changed. The numbers below were measured on the 3.1.0 server; 2.6 has not been
-measured yet.
+Nothing else changed. **The numbers in this README were measured on the 3.1.0 server; 2.6 has not
+been measured yet.** They are carried over because the code path is the same — treat them as the
+expected shape, not as a 2.6 result.
 
-## Problem
+## Requirements
 
-`RegionFileManager.thread_SaveChunks` runs `DoSaveChunks()` once per saved chunk, and every
-call unconditionally does:
-
-```csharp
-protectionLevelsDirty = true;
-CullExpiredChunks();          // full O(N) sweep of chunksInSaveDir, under saveLock + chunksInSaveDir
-```
-
-That is byte-for-byte the same in 2.6.
-
-So the whole save directory is walked once per saved chunk. Measured on a live server
-(4 vCPU, 13 players, 105k saved chunks):
-
-| | value |
+| | |
 |---|---|
-| sweeps | 17.7 / s |
-| cost per sweep | 26.3 ms |
-| SaveChunks thread | 47% of one core, 93% of it in the sweep |
-| chunks actually removed | 0.19 per sweep |
-| scan time per chunk removed | 139 ms |
-| `isChunkInSaveDir` callers blocked on the lock | 278 ms / s |
+| game | 7 Days to Die dedicated server **2.6** |
+| dependency | `0_TFP_Harmony` (ships with the server) |
+| clients | nothing to download, server-side only |
 
-In-game benchmark (`proflog cullbench`, 104667 keys, 137 pending reset requests):
+Branches of this repository:
 
-```
-raw iterate             0.75 ms    7 ns/key
-V0 vanilla replica     20.17 ms  193 ns/key
-V1 +HashSet resetReq    4.77 ms   46 ns/key
-V2 +KVP no relookup     3.60 ms   34 ns/key
-```
+| branch | game version |
+|---|---|
+| [`3.x`](https://github.com/kotfoxtrot/7d2d_CullExpiredFix/tree/3.x) | 3.0, 3.1, 3.2 |
+| [`2.6`](https://github.com/kotfoxtrot/7d2d_CullExpiredFix/tree/2.6) | 2.6 |
 
-76% of the sweep is `resetRequestedChunks.Contains(key)`. That field is a `List<long>`, so the
-loop is O(keys x pending requests) — 14.3M comparisons per sweep, 254M per second.
-
-## What the mod does
-
-Replaces `CullExpiredChunks` with a prefix (`Priority.Last`, returns `false`). Two independent
-switches:
-
-- **fastScan** — same loop, three changes: `HashSet` instead of `List.Contains`, iteration over
-  `KeyValuePair` so the timestamp comes from the enumerator instead of a second dictionary
-  lookup, and the group-timestamp override applied inline. Expected 20.2 ms -> 3.6 ms.
-- **throttle** — skips the sweep unless `IntervalSeconds` have passed since the last one.
-  At 30 s this turns 17.7 sweeps/s into 0.03/s.
-
-Semantics are unchanged: same lock order, same 10000-chunk cap, same protection handling, same
-`RemoveChunks(expired, true)` call, same `maxChunkAge < 0` branch. The only observable
-difference is that an expired chunk may be removed up to `IntervalSeconds` late — against a
-`MaxChunkAge` of 7 in-game days (~7 real hours) that is a 0.12% delay.
-
-`RequestChunkReset` and a `MaxChunkAge` game-pref change both force the next sweep to run
-immediately, so admin `resetregion` commands are not delayed.
+**[MaxChunkAgeDeadlockFix](https://github.com/kotfoxtrot/7d2d_MaxChunkAgeDeadlockFix) is required in
+practice.** There is no assembly reference between the two and nothing breaks if it is missing — but
+this mod only has work to do when `MaxChunkAge` is set or chunk resets are pending, and turning
+`MaxChunkAge` on without the deadlock fix freezes the whole server. Install that one first; this one
+is the optimization on top. See [Related mods](#related-mods).
 
 ## Install
 
-Copy `CullExpiredFix.dll`, `ModInfo.xml` and `Config.xml` to `Mods/CullExpiredFix/`.
-Requires `0_TFP_Harmony`.
+### From a release
 
-**Stop the server before replacing the DLL.** Overwriting it while the process runs leaves Mono
-with a memory-mapped assembly whose not-yet-JITted methods read different bytes, which surfaces
-as `BadImageFormatException: Method has zero rva` and kills the SaveChunks thread.
+1. Download the **2.6** archive from
+   [Releases](https://github.com/kotfoxtrot/7d2d_CullExpiredFix/releases).
+2. Unpack it into `<server>/Mods/` so that you end up with `<server>/Mods/1_CullExpiredFix/`
+   containing `CullExpiredFix.dll`, `ModInfo.xml` and `Config.xml`.
+3. Restart the server.
 
-## Config.xml
+### From source
 
-The file is watched (`FileSystemWatcher` plus a one-second poll fallback) and re-read within about
-a second of any change on disk. No restart and no console command needed. If the file is malformed
-the current values are kept and a warning is logged. `Config.xml` is created with defaults on first
-start if it is missing.
+```bash
+git clone -b 2.6 https://github.com/kotfoxtrot/7d2d_CullExpiredFix.git
+cd 7d2d_CullExpiredFix
+dotnet build -c Release -p:GameRoot=/path/to/server
+```
+
+`GameRoot` is the dedicated server root — the folder holding `7DaysToDieServer_Data/Managed` and
+`Mods/0_TFP_Harmony`. Omit `-p:GameRoot` and the path baked into the `.csproj` is used. The build
+references the game assemblies in place and never copies them.
+
+Copy `bin/CullExpiredFix.dll`, `ModInfo.xml` and `Config.xml` into `<server>/Mods/1_CullExpiredFix/`.
+
+### Folder name
+
+The folder must start with `1_`. Mods are loaded in alphabetical order: `0_TFP_Harmony` provides
+Harmony and has to come first, and this mod patches an engine call site that other mods also patch,
+so its patches should be applied ahead of theirs. `1_` puts it directly after Harmony and before
+everything else.
+
+## Configuration
+
+`Config.xml` sits next to the DLL and is created with defaults on first start if missing. The file
+is watched (`FileSystemWatcher` plus a one-second poll fallback) and re-read within about a second of
+any change on disk — no restart and no console command needed. If the file is malformed the current
+values are kept and a warning is logged.
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
@@ -121,6 +128,59 @@ cullfix reload           re-read Config.xml now
 Setting `throttle off fastscan on` measures the scan fix alone; that is the useful A/B, because
 with throttling on the scan cost stops being visible and a future growth of the pending-request
 list would go unnoticed.
+
+## Problem
+
+`RegionFileManager.thread_SaveChunks` runs `DoSaveChunks()` once per saved chunk, and every
+call unconditionally does:
+
+```csharp
+protectionLevelsDirty = true;
+CullExpiredChunks();          // full O(N) sweep of chunksInSaveDir, under saveLock + chunksInSaveDir
+```
+
+That is byte-for-byte the same in 2.6. So the whole save directory is walked once per saved chunk.
+Measured on a live server (4 vCPU, 13 players, 105k saved chunks):
+
+| | value |
+|---|---|
+| sweeps | 17.7 / s |
+| cost per sweep | 26.3 ms |
+| SaveChunks thread | 47% of one core, 93% of it in the sweep |
+| chunks actually removed | 0.19 per sweep |
+| scan time per chunk removed | 139 ms |
+| `isChunkInSaveDir` callers blocked on the lock | 278 ms / s |
+
+In-game benchmark (`proflog cullbench`, 104667 keys, 137 pending reset requests):
+
+```
+raw iterate             0.75 ms    7 ns/key
+V0 vanilla replica     20.17 ms  193 ns/key
+V1 +HashSet resetReq    4.77 ms   46 ns/key
+V2 +KVP no relookup     3.60 ms   34 ns/key
+```
+
+76% of the sweep is `resetRequestedChunks.Contains(key)`. That field is a `List<long>`, so the
+loop is O(keys x pending requests) — 14.3M comparisons per sweep, 254M per second.
+
+## How it works
+
+Replaces `CullExpiredChunks` with a prefix (`Priority.Last`, returns `false`). Two independent
+switches:
+
+- **fastScan** — same loop, three changes: `HashSet` instead of `List.Contains`, iteration over
+  `KeyValuePair` so the timestamp comes from the enumerator instead of a second dictionary
+  lookup, and the group-timestamp override applied inline. Expected 20.2 ms -> 3.6 ms.
+- **throttle** — skips the sweep unless `IntervalSeconds` have passed since the last one.
+  At 30 s this turns 17.7 sweeps/s into 0.03/s.
+
+Semantics are unchanged: same lock order, same 10000-chunk cap, same protection handling, same
+`RemoveChunks(expired, true)` call, same `maxChunkAge < 0` branch. The only observable difference is
+that an expired chunk may be removed up to `IntervalSeconds` late — set against a `MaxChunkAge` of 7
+in-game days (~7 real hours) that is a 0.12% delay.
+
+`RequestChunkReset` and a `MaxChunkAge` game-pref change both force the next sweep to run
+immediately, so admin `resetregion` commands are not delayed.
 
 ## Counter line
 
@@ -165,15 +225,15 @@ does not remove them.
 
 That mod puts a `Prefix` + `Finalizer` on the same method for its reset logging. This mod's
 prefix uses `Priority.Last`, so the marker prefix runs first and the finalizer still runs,
-in either registration order. Verified against Harmony 2.13.
+in either registration order. Verified with Harmony 2.13.
 
 Because sweeps get batched, `[MaxChunkAgeDeadlockFix] Chunk reset` lines become fewer and each
 lists more chunks. Total chunks reset is unchanged.
 
 ## Measured effect
 
-**Measured on the 3.1.0 server, not on 2.6.** Carried over because the code path is the same;
-treat it as the expected shape, not as a 2.6 result.
+**Measured on the 3.1.0 server, not on 2.6.** Carried over because the code path is the same; treat
+it as the expected shape, not as a 2.6 result.
 
 Live server, 4 vCPU, 90k-133k saved chunks. Vanilla 4.2 h, fastScan 12.1 h, throttle 3.5 h,
 both 5.4 h. All figures are taken at a matched 9-10 players, because the sessions ran at
@@ -227,3 +287,27 @@ ceiling.
 The counter line's `mean` and `perKey` divide the whole of `Run()` — scan plus
 `UpdateChunkProtectionLevels` plus `RemoveChunks` — by the key count, so with `throttle` on they
 read high (14.81 ms / 109 ns) against a scan that is actually 62 ns/key.
+
+## Related mods
+
+Three server-side mods for the same dedicated server, same build layout, same `[Name]` log prefix.
+All three have a `2.6` branch:
+
+| mod | what it is for |
+|---|---|
+| [MaxChunkAgeDeadlockFix](https://github.com/kotfoxtrot/7d2d_MaxChunkAgeDeadlockFix) | makes `MaxChunkAge` chunk reset safe by breaking the lock-order deadlock that freezes the server |
+| [CullExpiredFix](https://github.com/kotfoxtrot/7d2d_CullExpiredFix) | this mod — makes that same reset cheap |
+| [ProfLog](https://github.com/kotfoxtrot/7d2d_ProfLog) | read-only profiler — the tool the numbers above were measured with |
+
+**MaxChunkAgeDeadlockFix — required in practice.** This mod optimizes a sweep that only does work
+when `MaxChunkAge` is set or chunk resets are pending. Enabling `MaxChunkAge` without the deadlock
+fix hangs the server hard: the main thread and the `SaveChunks` thread park on each other's locks.
+So on a server without it there is either nothing here to optimize, or a freeze waiting to happen.
+The 2.6 build of it additionally repairs the region file and shared chunk stream synchronization
+that 2.6 omits — on 2.6 there is even less reason to run without it. There is no assembly reference
+between the two.
+
+**ProfLog — optional, for admins.** A read-only measuring mod. Every figure in
+[Measured effect](#measured-effect) came out of it, including the `cullbench` table above, and it is
+how you reproduce them on your own server: it decomposes `CullExpiredChunks` into lock wait,
+protection rebuild, scan and removal. Useful for diagnosis, not needed to run this mod.
