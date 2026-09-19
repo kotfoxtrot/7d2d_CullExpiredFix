@@ -1,2 +1,7 @@
-<?xml version="1.0" encoding="utf-8"?>
-<CullExpiredFix fastScan="true" throttle="true" intervalSeconds="30" logEverySeconds="600" />
+<?xml version="1.0" encoding="UTF-8"?>
+<CullExpiredFix>
+  <property name="FastScan" value="true" />
+  <property name="Throttle" value="true" />
+  <property name="IntervalSeconds" value="30" />
+  <property name="LogEverySeconds" value="600" />
+</CullExpiredFix>

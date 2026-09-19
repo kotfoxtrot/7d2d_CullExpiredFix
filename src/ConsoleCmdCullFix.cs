@@ -33,7 +33,8 @@ namespace CullExpiredFix
                 + "cullfix log <sec>        counter line in the server log every n seconds, 0 disables\n"
                 + "cullfix run              run one scan on the next save cycle\n"
                 + "cullfix stuck [n]        list reset requests that can never complete\n"
-                + "cullfix save             write Config.xml";
+                + "cullfix save             write Config.xml\n"
+                + "cullfix reload           re-read Config.xml now";
         }
 
         private static void Out(string s)
@@ -50,6 +51,8 @@ namespace CullExpiredFix
                 if (a == "stats" || a == "status")
                 {
                     Out("[CullExpiredFix] " + (CullPatch.Disabled ? "DISABLED" : "active") + " " + Settings.Describe());
+                    Out("config: " + Settings.Path + (Settings.Watching ? " (watched" : " (not watched")
+                        + ", reloads=" + Settings.Reloads + ")");
                     Out(Stats.Describe());
                     double since = CullPatch.SecondsSinceRun();
                     Out(since < 0.0 ? "no scan yet" : string.Format("last scan {0:F1}s ago", since));
@@ -122,7 +125,15 @@ namespace CullExpiredFix
                 if (a == "save")
                 {
                     Settings.Save();
-                    Out("Config.xml written");
+                    Out("Config.xml written: " + Settings.Path);
+                    return;
+                }
+
+                if (a == "reload")
+                {
+                    Out(Settings.Reload()
+                        ? "reloaded: " + Settings.Describe()
+                        : "reload failed, current values kept: " + Settings.LastError);
                     return;
                 }
 
