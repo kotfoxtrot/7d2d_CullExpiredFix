@@ -83,7 +83,7 @@ values are kept and a warning is logged.
 <CullExpiredFix>
   <property name="FastScan" value="true" />
   <property name="Throttle" value="true" />
-  <property name="IntervalSeconds" value="30" />
+  <property name="IntervalSeconds" value="5" />
   <property name="LogEverySeconds" value="600" />
 </CullExpiredFix>
 ```
@@ -92,7 +92,7 @@ values are kept and a warning is logged.
 |---|---|---|
 | `FastScan` | `true` | use the mod scan loop |
 | `Throttle` | `true` | enforce a minimum gap between sweeps |
-| `IntervalSeconds` | `30` | that gap, 0..3600 |
+| `IntervalSeconds` | `5` | that gap, 0..3600 |
 | `LogEverySeconds` | `600` | counter line in the server log, 0 disables; emitted in every mode |
 
 ## Commands
@@ -157,7 +157,7 @@ switches:
   `KeyValuePair` so the timestamp comes from the enumerator instead of a second dictionary
   lookup, and the group-timestamp override applied inline. Expected 20.2 ms -> 3.6 ms.
 - **throttle** — skips the sweep unless `IntervalSeconds` have passed since the last one.
-  At 30 s this turns 17.7 sweeps/s into 0.03/s.
+  At 5 s this turns 17.7 sweeps/s into 0.2/s.
 
 Semantics are unchanged: same lock order, same 10000-chunk cap, same protection handling, same
 `RemoveChunks(expired, true, false)` call, same `maxChunkAge < 0` branch. The only observable

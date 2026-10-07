@@ -14,7 +14,7 @@ namespace CullExpiredFix
 
         public static volatile bool FastScan = true;
         public static volatile bool Throttle = true;
-        public static volatile int IntervalSec = 30;
+        public static volatile int IntervalSec = 5;
         public static volatile int LogEverySec = 600;
 
         public static long Reloads;

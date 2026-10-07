@@ -2,6 +2,6 @@
 <CullExpiredFix>
   <property name="FastScan" value="true" />
   <property name="Throttle" value="true" />
-  <property name="IntervalSeconds" value="30" />
+  <property name="IntervalSeconds" value="5" />
   <property name="LogEverySeconds" value="600" />
 </CullExpiredFix>
